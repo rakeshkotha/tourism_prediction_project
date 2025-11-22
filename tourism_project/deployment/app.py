@@ -52,7 +52,7 @@ input_data = pd.DataFrame([{
     'Passport': 1 if Passport == "Yes" else 0,
     'PitchSatisfactionScore': PitchSatisfactionScore,
     'OwnCar': 1 if OwnCar == "Yes" else 0,
-    'NumberOfChildrenVisited': NumberOfChildrenVisited,
+    'NumberOfChildrenVisiting': NumberOfChildrenVisited,
     'Designation': Designation,
     'MonthlyIncome': MonthlyIncome
 }])
