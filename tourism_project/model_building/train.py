@@ -150,7 +150,7 @@ with mlflow.start_run():
     print(f"Best parameters found: {grid_search.best_params_}")
     print(f"Test ROC AUC: {test_roc_auc:.4f}")
     print(f"Test Accuracy: {test_accuracy:.4f}")
-        print(f"Model saved as artifact at: {model_path}")
+    print(f"Model saved as artifact at: {model_path}")
 
     # Upload to Hugging Face
     repo_id = "rakeshkotha1/tourism-prediction"
