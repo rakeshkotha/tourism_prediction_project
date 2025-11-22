@@ -6,6 +6,7 @@ from sklearn.pipeline import make_pipeline
 from xgboost import XGBClassifier
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
 import mlflow
+import joblib
 import mlflow.sklearn
 from huggingface_hub import HfApi
 
@@ -167,8 +168,8 @@ with mlflow.start_run():
 
     # create_repo("churn-model", repo_type="model", private=False)
     api.upload_file(
-        path_or_fileobj="best_machine_failure_model_v1.joblib",
-        path_in_repo="best_machine_failure_model_v1.joblib",
+        path_or_fileobj="tourism_prediction.joblib",
+        path_in_repo="tourism_prediction.joblib",
         repo_id=repo_id,
         repo_type=repo_type,
     )
