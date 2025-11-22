@@ -1,156 +1,122 @@
 import pandas as pd
-import os
-from sklearn.model_selection import train_test_split, GridSearchCV
-from sklearn.preprocessing import StandardScaler
+from sklearn.compose import make_column_transformer
 from sklearn.pipeline import make_pipeline
-from xgboost import XGBClassifier
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
-import mlflow
+import xgboost as xgb
+from sklearn.model_selection import GridSearchCV
+from sklearn.metrics import classification_report
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
 import joblib
-import mlflow.sklearn
-from huggingface_hub import HfApi
+from huggingface_hub import login, HfApi, create_repo
+from huggingface_hub.utils import RepositoryNotFoundError, HfHubHTTPError
+import mlflow
+import os
 
-# Set MLflow tracking URI to HTTP server
-mlflow.set_tracking_uri("http://localhost:5000")
+mlflow.set_tracking_uri("http://0.0.0.0:5000")
 mlflow.set_experiment("MLOps_CICD_experiment")
 
-# Initialize HfApi
+# Hugging Face API authentication
 api = HfApi(token=os.getenv("HF_TOKEN"))
-repo_id = "rakeshkotha1/tourism-prediction"
-repo_type = "dataset" # Corrected to 'dataset' for downloading
+Xtrain_path = "hf://datasets/rakeshkotha1/tourism-prediction/Xtrain.csv"
+Xtest_path = "hf://datasets/rakeshkotha1/tourism-prediction/Xtest.csv"
+ytrain_path = "hf://datasets/rakeshkotha1/tourism-prediction/ytrain.csv"
+ytest_path = "hf://datasets/rakeshkotha1/tourism-prediction/ytest.csv"
 
-# Download the preprocessed data from Hugging Face
-print("Downloading preprocessed data from Hugging Face...")
-api.hf_hub_download(repo_id=repo_id, filename="Xtrain.csv", repo_type=repo_type, local_dir=".")
-api.hf_hub_download(repo_id=repo_id, filename="Xtest.csv", repo_type=repo_type, local_dir=".")
-api.hf_hub_download(repo_id=repo_id, filename="ytrain.csv", repo_type=repo_type, local_dir=".")
-api.hf_hub_download(repo_id=repo_id, filename="ytest.csv", repo_type=repo_type, local_dir=".")
-print("Preprocessed data downloaded successfully.")
+# Load datasets
+Xtrain = pd.read_csv(Xtrain_path)
+Xtest = pd.read_csv(Xtest_path)
+ytrain = pd.read_csv(ytrain_path)
+ytest = pd.read_csv(ytest_path)
 
-# Load the preprocessed data
-Xtrain = pd.read_csv("Xtrain.csv")
-Xtest = pd.read_csv("Xtest.csv")
-ytrain = pd.read_csv("ytrain.csv").squeeze() # .squeeze() to convert DataFrame to Series
-ytest = pd.read_csv("ytest.csv").squeeze()
+numeric_features = [
+    'Age',                     
+    'CityTier',                
+    'DurationOfPitch',         
+    'NumberOfPersonVisiting',  
+    'NumberOfFollowups',       
+    'PreferredPropertyStar',   
+    'NumberOfTrips',          
+    'PitchSatisfactionScore', 
+    'NumberOfChildrenVisiting', 
+    'MonthlyIncome',
+    'Passport',   
+    'OwnCar'   
+]
+categorical_features = [
+    'TypeofContact',   
+    'Occupation',      
+    'Gender',          
+    'ProductPitched',  
+    'MaritalStatus',   
+    'Designation'      
+]
+# Set the class weight to handle class imbalance
+class_weight = ytrain.value_counts()[0] / ytrain.value_counts()[1]
 
-# Drop 'Unnamed: 0' if it exists in the loaded dataframes
-if 'Unnamed: 0' in Xtrain.columns:
-    Xtrain = Xtrain.drop(columns=['Unnamed: 0'])
-if 'Unnamed: 0' in Xtest.columns:
-    Xtest = Xtest.drop(columns=['Unnamed: 0'])
+# Define the preprocessing steps
+preprocessor = make_column_transformer(
+    (StandardScaler(), numeric_features),
+    (OneHotEncoder(handle_unknown='ignore'), categorical_features)
+)
+# Define base XGBoost model
+xgb_model = xgb.XGBClassifier(scale_pos_weight=class_weight, random_state=42)
 
-print(f"Xtrain shape: {Xtrain.shape}, ytrain shape: {ytrain.shape}")
-print(f"Xtest shape: {Xtest.shape}, ytest shape: {ytest.shape}")
-
-# --- Diagnostic Step: Check for non-numeric columns before training ---
-print("\nChecking Xtrain dtypes before model training:")
-print(Xtrain.info())
-non_numeric_cols_xtrain = Xtrain.select_dtypes(include=['object']).columns
-if len(non_numeric_cols_xtrain) > 0:
-    print(f"Found non-numeric columns in Xtrain: {list(non_numeric_cols_xtrain)}")
-    print("Please ensure all features are numerical before proceeding with model training.")
-    raise ValueError("Non-numeric columns detected in Xtrain. Cannot proceed with StandardScaler.")
-
-print("\nChecking Xtest dtypes before model training:")
-print(Xtest.info())
-non_numeric_cols_xtest = Xtest.select_dtypes(include=['object']).columns
-if len(non_numeric_cols_xtest) > 0:
-    print(f"Found non-numeric columns in Xtest: {list(non_numeric_cols_xtest)}")
-    print("Please ensure all features are numerical before proceeding with model training.")
-    raise ValueError("Non-numeric columns detected in Xtest. Cannot proceed with StandardScaler.")
-# -------------------------------------------------------------------
-
-# Define base XGBoost Classifier
-xgb_model = XGBClassifier(random_state=42, n_jobs=-1, use_label_encoder=False, eval_metric='logloss')
-
-# Preprocessor: Scale numerical features (all features are now numerical after label encoding)
-# No need for ColumnTransformer as all features are treated the same way
-preprocessor = StandardScaler()
-
-# Pipeline: Preprocessor + Classifier
+# Define hyperparameter grid
+param_grid = {
+    'xgbclassifier__n_estimators': [50, 75, 100, 125, 150],
+    'xgbclassifier__max_depth': [2, 3, 4],
+    'xgbclassifier__colsample_bytree': [0.4, 0.5, 0.6],
+    'xgbclassifier__colsample_bylevel': [0.4, 0.5, 0.6],
+    'xgbclassifier__learning_rate': [0.01, 0.05, 0.1],
+    'xgbclassifier__reg_lambda': [0.4, 0.5, 0.6],
+}
+# Model pipeline
 model_pipeline = make_pipeline(preprocessor, xgb_model)
 
-# Hyperparameter grid for XGBClassifier (reduced for quicker execution)
-param_grid = {
-    'xgbclassifier__n_estimators': [100, 150],
-    'xgbclassifier__max_depth': [3, 5],
-    'xgbclassifier__learning_rate': [0.05, 0.1],
-    'xgbclassifier__subsample': [0.8, 0.9],
-    'xgbclassifier__colsample_bytree': [0.8, 0.9],
-    'xgbclassifier__gamma': [0.1, 0.2]
-}
-
+# Start MLflow run
 with mlflow.start_run():
-    # Grid Search with cross-validation
-    # Using 'roc_auc' as a scoring metric for binary classification
-    grid_search = GridSearchCV(
-        model_pipeline,
-        param_grid,
-        cv=3,
-        n_jobs=-1,
-        scoring='roc_auc',
-        verbose=1
-    )
+    mlflow.set_tag("run_id", "run_id")
+    # Hyperparameter tuning with GridSearchCV
+    grid_search = GridSearchCV(model_pipeline, param_grid, cv=5, n_jobs=-1)
     grid_search.fit(Xtrain, ytrain)
 
-    # Log parameter sets for each run
-    results = grid_search.cv_results_
-    for i in range(len(results['params'])):
-        param_set = results['params'][i]
-        mean_score = results['mean_test_score'][i]
-
-        with mlflow.start_run(nested=True):
-            mlflow.log_params(param_set)
-            mlflow.log_metric("mean_roc_auc", mean_score)
-
-    # Log best parameters and best model
+    # Log hyperparameters
     mlflow.log_params(grid_search.best_params_)
+
+    # Store the best model
     best_model = grid_search.best_estimator_
 
-    # Predictions on train and test sets
-    y_pred_train = best_model.predict(Xtrain)
-    y_proba_train = best_model.predict_proba(Xtrain)[:, 1] # Probability for the positive class
-    y_pred_test = best_model.predict(Xtest)
-    y_proba_test = best_model.predict_proba(Xtest)[:, 1] # Probability for the positive class
+    # Set classification threshold
+    classification_threshold = 0.45
 
-    # Calculate classification metrics
-    train_accuracy = accuracy_score(ytrain, y_pred_train)
-    test_accuracy = accuracy_score(ytest, y_pred_test)
+    # Make predictions on the training and test data
+    y_pred_train_proba = best_model.predict_proba(Xtrain)[:, 1]
+    y_pred_train = (y_pred_train_proba >= classification_threshold).astype(int)
 
-    train_precision = precision_score(ytrain, y_pred_train, zero_division=0)
-    test_precision = precision_score(ytest, y_pred_test, zero_division=0)
+    y_pred_test_proba = best_model.predict_proba(Xtest)[:, 1]
+    y_pred_test = (y_pred_test_proba >= classification_threshold).astype(int)
 
-    train_recall = recall_score(ytrain, y_pred_train, zero_division=0)
-    test_recall = recall_score(ytest, y_pred_test, zero_division=0)
-
-    train_f1 = f1_score(ytrain, y_pred_train, zero_division=0)
-    test_f1 = f1_score(ytest, y_pred_test, zero_division=0)
-
-    # ROC AUC requires probabilities
-    train_roc_auc = roc_auc_score(ytrain, y_proba_train)
-    test_roc_auc = roc_auc_score(ytest, y_proba_test)
+    # Evaluation
+    train_report = classification_report(ytrain, y_pred_train, output_dict=True)
+    test_report = classification_report(ytest, y_pred_test, output_dict=True)
 
     # Log metrics
     mlflow.log_metrics({
-        "train_accuracy": train_accuracy,
-        "test_accuracy": test_accuracy,
-        "train_precision": train_precision,
-        "test_precision": test_precision,
-        "train_recall": train_recall,
-        "test_recall": test_recall,
-        "train_f1_score": train_f1,
-        "test_f1_score": test_f1,
-        "train_roc_auc": train_roc_auc,
-        "test_roc_auc": test_roc_auc
+        "train_accuracy": train_report['accuracy'],
+        "train_precision": train_report['1']['precision'],
+        "train_recall": train_report['1']['recall'],
+        "train_f1-score": train_report['1']['f1-score'],
+        "test_accuracy": test_report['accuracy'],
+        "test_precision": test_report['1']['precision'],
+        "test_recall": test_report['1']['recall'],
+        "test_f1-score": test_report['1']['f1-score']
     })
+
+    # Save the model locally
     model_path = "tourism_prediction.joblib"
     joblib.dump(best_model, model_path)
-    # Log the best model with an input example
-    mlflow.sklearn.log_model(best_model, "xgboost_tourism_model", input_example=Xtest.head(1))
 
-    print(f"Best parameters found: {grid_search.best_params_}")
-    print(f"Test ROC AUC: {test_roc_auc:.4f}")
-    print(f"Test Accuracy: {test_accuracy:.4f}")
+    # Log the model artifact
+    mlflow.log_artifact(model_path, artifact_path="model")
     print(f"Model saved as artifact at: {model_path}")
 
     # Upload to Hugging Face
