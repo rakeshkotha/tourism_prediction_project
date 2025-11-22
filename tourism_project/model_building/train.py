@@ -9,6 +9,10 @@ import mlflow
 import mlflow.sklearn
 from huggingface_hub import HfApi
 
+# Set MLflow tracking URI to HTTP server
+mlflow.set_tracking_uri("http://localhost:5000")
+mlflow.set_experiment("MLOps_CICD_experiment")
+
 # Initialize HfApi
 api = HfApi(token=os.getenv("HF_TOKEN"))
 repo_id = "rakeshkotha1/tourism-prediction"
